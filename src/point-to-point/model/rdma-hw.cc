@@ -336,6 +336,7 @@ int RdmaHw::ReceiveUdp(Ptr<Packet> p, CustomHeader &ch){
 	uint8_t ecnbits = ch.GetIpv4EcnBits();
 
 	uint32_t payload_size = p->GetSize() - ch.GetSerializedSize();
+	std::cout << "[ID: " << m_node->GetId() << "]" << "ReceiveUdp sport " << ch.udp.sport << " dport " << ch.udp.dport << " size " << p->GetSize() << " payload_size " << payload_size << std::endl;
 	// TODO find corresponding rx queue pair
 	Ptr<RdmaRxQueuePair> rxQp = GetRxQp(ch.dip, ch.sip, ch.udp.dport, ch.udp.sport, ch.udp.pg, true);
 	uint32_t nic_id = GetNicIdxOfRxQp(rxQp);
@@ -458,6 +459,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 			qp->Acknowledge(goback_seq);
 		}
 		if (qp->IsFinished()){
+			std::cout << "[ID: " << m_node->GetId() << "]" << "QP finished [port] " << port << std::endl;
 			QpComplete(qp);
 		}
 	}
@@ -505,6 +507,9 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
 		q->ReceiverNextExpectedSeq = expected + size;
 		if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx){
 			q->m_milestone_rx += m_ack_interval;
+			//if (m_node->GetId() == 0) {
+				std::cout << "[ID: " << m_node->GetId() << "]" << "ACK:  [dport] " << q->dport << std::endl;
+			//}
 			return 1; //Generate ACK
 		}else if (q->ReceiverNextExpectedSeq % m_chunk == 0){
 			return 1;
@@ -519,6 +524,7 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
 			if (m_backto0){
 				q->ReceiverNextExpectedSeq = q->ReceiverNextExpectedSeq / m_chunk*m_chunk;
 			}
+			std::cout << "[ID: " << m_node->GetId() << "]" << "NACK:  [dport] " << q->dport << std::endl;
 			return 2;
 		}else
 			return 4;

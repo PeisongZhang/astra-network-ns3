@@ -368,6 +368,10 @@ namespace ns3 {
 			// If we have an error model and it indicates that it is time to lose a
 			// corrupted packet, don't forward this packet up, let it go.
 			//
+			CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);
+			ch.getInt = 1; // parse INT header
+			packet->PeekHeader(ch);
+			std::cout << "[ID: " << m_node->GetId() << "]" << "Corrupted packet received [sport dport]" << ch.udp.sport << " " << ch.udp.dport  << std::endl;
 			m_phyRxDropTrace(packet);
 			return;
 		}
