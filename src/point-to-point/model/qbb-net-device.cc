@@ -372,9 +372,13 @@ namespace ns3 {
 			ch.getInt = 1; // parse INT header
 			packet->PeekHeader(ch);
 			std::cout << "[ID: " << m_node->GetId() << "]" << "Corrupted packet received [sport dport]" << ch.udp.sport << " " << ch.udp.dport  << std::endl;
+			if (ch.l3Prot == 0xFD || ch.l3Prot == 0xFC) // NACK or ACK
+				std::cout << "[ID: " << m_node->GetId() << "]" << "Corrupted NACK/ACK received [sport dport]" << ch.udp.sport << " " << ch.udp.dport  << std::endl;
+				goto skip_drop;
 			m_phyRxDropTrace(packet);
 			return;
 		}
+skip_drop:
 
 		m_macRxTrace(packet);
 		CustomHeader ch(CustomHeader::L2_Header | CustomHeader::L3_Header | CustomHeader::L4_Header);

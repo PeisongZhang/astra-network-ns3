@@ -464,7 +464,7 @@ int RdmaHw::ReceiveAck(Ptr<Packet> p, CustomHeader &ch){
 		}
 	}
 	if (ch.l3Prot == 0xFD) // NACK
-		RecoverQueue(qp);
+		RecoverQueue(qp, seq);
 
 	// handle cnp
 	if (cnp){
@@ -503,6 +503,9 @@ int RdmaHw::Receive(Ptr<Packet> p, CustomHeader &ch){
 
 int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size){
 	uint32_t expected = q->ReceiverNextExpectedSeq;
+	if (m_node->GetId()) {
+		std::cout << "[ID: " << m_node->GetId() << "]" << "ReceiverCheckSeq: [dport] " << q->dport << " seq " << seq << " expected " << expected << std::endl;
+	}
 	if (seq == expected){
 		q->ReceiverNextExpectedSeq = expected + size;
 		if (q->ReceiverNextExpectedSeq >= q->m_milestone_rx){
@@ -527,6 +530,8 @@ int RdmaHw::ReceiverCheckSeq(uint32_t seq, Ptr<RdmaRxQueuePair> q, uint32_t size
 			std::cout << "[ID: " << m_node->GetId() << "]" << "NACK:  [dport] " << q->dport << std::endl;
 			return 2;
 		}else
+			std::cout << "[ID: " << m_node->GetId() << "]" << "NACK:  [dport] " << q->dport << " NACK too frequent.\n\
+			Simulator.Now: " << Simulator::Now() << " nacktimer: " << q->m_nackTimer << " lastnack " << q->m_lastNACK << " expected " << expected << std::endl;
 			return 4;
 	}else {
 		// Duplicate.
@@ -547,7 +552,8 @@ uint16_t RdmaHw::EtherToPpp (uint16_t proto){
 	return 0;
 }
 
-void RdmaHw::RecoverQueue(Ptr<RdmaQueuePair> qp){
+void RdmaHw::RecoverQueue(Ptr<RdmaQueuePair> qp, uint32_t seq){
+	std::cout << "[ID: " << m_node->GetId() << "]" << "RecoverQueue: [dport] " << qp->dport << " snd_nxt " << qp->snd_nxt << " snd_una " << qp->snd_una << " seq " << seq << std::endl;
 	qp->snd_nxt = qp->snd_una;
 }
 

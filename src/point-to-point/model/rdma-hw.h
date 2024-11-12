@@ -75,7 +75,7 @@ public:
 	void AddHeader (Ptr<Packet> p, uint16_t protocolNumber);
 	static uint16_t EtherToPpp (uint16_t protocol);
 
-	void RecoverQueue(Ptr<RdmaQueuePair> qp);
+	void RecoverQueue(Ptr<RdmaQueuePair> qp, uint32_t seq);
 	void QpComplete(Ptr<RdmaQueuePair> qp);
 	void SetLinkDown(Ptr<QbbNetDevice> dev);
 
