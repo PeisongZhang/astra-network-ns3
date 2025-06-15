@@ -320,6 +320,7 @@ uint64_t get_nic_rate(NodeContainer &n) {
       return DynamicCast<QbbNetDevice>(n.Get(i)->GetDevice(1))
           ->GetDataRate()
           .GetBitRate();
+  // TODO: Complain if you cannot find the NIC rate.
   return 0;
 }
 
