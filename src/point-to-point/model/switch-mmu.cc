@@ -91,7 +91,9 @@ namespace ns3 {
 	}
 
 	uint32_t SwitchMmu::GetPfcThreshold(uint32_t port){
-		return (buffer_size - total_hdrm - total_rsrv - shared_used_bytes) >> pfc_a_shift[port];
+		uint32_t total_used_bytes = total_hdrm + total_rsrv + shared_used_bytes;
+		uint32_t diff = (buffer_size > total_used_bytes) ? buffer_size - total_used_bytes : 0;
+		return diff >> pfc_a_shift[port];
 	}
 	uint32_t SwitchMmu::GetSharedUsed(uint32_t port, uint32_t qIndex){
 		uint32_t used = ingress_bytes[port][qIndex];
