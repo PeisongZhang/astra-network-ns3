@@ -82,6 +82,7 @@ uint32_t buffer_size = 16;
 
 uint32_t qlen_dump_interval = 1000, qlen_mon_interval = 100;
 uint64_t qlen_mon_start = 0, qlen_mon_end = 2100000000;
+int headroom_factor = 3;
 string qlen_mon_file;
 
 unordered_map<uint64_t, uint32_t> rate2kmax, rate2kmin;
@@ -513,6 +514,11 @@ bool ReadConf(string network_configuration) {
       conf >> pint_log_base;
     } else if (key.compare("PINT_PROB") == 0) {
       conf >> pint_prob;
+    } else if (key == "HEADROOM_FACTOR") {
+      int v;
+      conf >> v;
+      headroom_factor = v;
+      std::cout << "headroom factor set to: " << headroom_factor << std::endl;
     }
     fflush(stdout);
   }
@@ -723,7 +729,7 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
                              ->GetDelay()
                              .GetTimeStep();
         // uint32_t headroom = 150000; // rate * delay / 8 / 1000000000 * 3;
-        uint32_t headroom = rate * delay / 8 / 1000000000 * 3;
+        uint32_t headroom = rate * delay / 8 / 1000000000 * headroom_factor;
         sw->m_mmu->ConfigHdrm(j, headroom);
 
         // set pfc alpha, proportional to link bw
