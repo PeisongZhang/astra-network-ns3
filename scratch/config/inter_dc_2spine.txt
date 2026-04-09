@@ -3,13 +3,13 @@ USE_DYNAMIC_PFC_THRESHOLD 1
 
 PACKET_PAYLOAD_SIZE 256000
 
-TOPOLOGY_FILE ../../scratch/topology/16_baseline.txt
-FLOW_FILE ../../scratch/output/flow_baseline.txt
-TRACE_FILE ../../scratch/output/trace_baseline.txt
-TRACE_OUTPUT_FILE ../../scratch/output/mix_baseline.tr
-FCT_OUTPUT_FILE ../../scratch/output/fct_baseline.txt
-PFC_OUTPUT_FILE ../../scratch/output/pfc_baseline.txt
-QLEN_MON_FILE ../../scratch/output/qlen_baseline.txt
+TOPOLOGY_FILE ../../scratch/topology/inter_dc_2spine.txt
+FLOW_FILE ../../scratch/output/flow_inter_dc_2spine.txt
+TRACE_FILE ../../scratch/output/trace_inter_dc_2spine.txt
+TRACE_OUTPUT_FILE ../../scratch/output/mix_inter_dc_2spine.tr
+FCT_OUTPUT_FILE ../../scratch/output/fct_inter_dc_2spine.txt
+PFC_OUTPUT_FILE ../../scratch/output/pfc_inter_dc_2spine.txt
+QLEN_MON_FILE ../../scratch/output/qlen_inter_dc_2spine.txt
 QLEN_MON_START 0
 QLEN_MON_END 20000
 
@@ -58,8 +58,8 @@ LINK_DOWN 0 0 0
 
 ENABLE_TRACE 1
 
-KMAX_MAP 3 200000000000 600 800000000000 2400 4800000000000 14400
-KMIN_MAP 3 200000000000 200 800000000000 800 4800000000000 4800
-PMAX_MAP 3 200000000000 0.2 800000000000 0.2 4800000000000 0.2
+KMAX_MAP 3 200000000000 600 400000000000 1200 4800000000000 14400
+KMIN_MAP 3 200000000000 200 400000000000 400 4800000000000 4800
+PMAX_MAP 3 200000000000 0.2 400000000000 0.2 4800000000000 0.2
 
 BUFFER_SIZE 128
