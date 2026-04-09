@@ -4,6 +4,7 @@ USE_DYNAMIC_PFC_THRESHOLD 1 {0: disable, 1: enable}
 PACKET_PAYLOAD_SIZE 1000 {packet size (bytes)}
 
 TOPOLOGY_FILE mix/topology.txt {input file: topoology}
+{topology link format: src dst data_rate delay error_rate [weight], optional weight defaults to 1}
 FLOW_FILE mix/flow.txt {input file: flow to generate}
 TRACE_FILE mix/trace.txt {input file: nodes to monitor packet-level events (enqu, dequ, pfc, etc.), will be dumped to TRACE_OUTPUT_FILE}
 TRACE_OUTPUT_FILE mix/mix.tr {output file: packet-level events (enqu, dequ, pfc, etc.)}

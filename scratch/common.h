@@ -28,6 +28,7 @@
 #include "ns3/qbb-helper.h"
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <ns3/rdma-client-helper.h>
 #include <ns3/rdma-client.h>
 #include <ns3/rdma-driver.h>
@@ -109,10 +110,11 @@ struct Interface {
   bool up;
   uint64_t delay;
   uint64_t bw;
+  uint32_t weight;
 
-  Interface() : idx(0), up(false) {}
+  Interface() : idx(0), up(false), delay(0), bw(0), weight(1) {}
 };
-map<Ptr<Node>, map<Ptr<Node>, Interface>> nbr2if;
+map<Ptr<Node>, map<Ptr<Node>, vector<Interface>>> nbr2if;
 // Mapping destination to next hop for each node: <node, <dest, <nexthop0, ...>
 // > >
 map<Ptr<Node>, map<Ptr<Node>, vector<Ptr<Node>>>> nextHop;
@@ -226,16 +228,28 @@ void CalculateRoute(Ptr<Node> host) {
     Ptr<Node> now = q[i];
     int d = dis[now];
     for (auto it = nbr2if[now].begin(); it != nbr2if[now].end(); it++) {
-      // skip down link
-      if (!it->second.up)
+      const vector<Interface> &interfaces = it->second;
+      bool has_up_link = false;
+      Interface best;
+      for (const auto &intf : interfaces) {
+        if (!intf.up)
+          continue;
+        if (!has_up_link || intf.delay < best.delay ||
+            (intf.delay == best.delay && intf.bw > best.bw)) {
+          best = intf;
+          has_up_link = true;
+        }
+      }
+      // skip if all links to this neighbor are down
+      if (!has_up_link)
         continue;
       Ptr<Node> next = it->first;
       if (dis.find(next) == dis.end()) {
         dis[next] = d + 1;
-        delay[next] = delay[now] + it->second.delay;
+        delay[next] = delay[now] + best.delay;
         txDelay[next] = txDelay[now] +
-                        packet_payload_size * 1000000000lu * 8 / it->second.bw;
-        bw[next] = std::min(bw[now], it->second.bw);
+                        packet_payload_size * 1000000000lu * 8 / best.bw;
+        bw[next] = std::min(bw[now], best.bw);
         if (next->GetNodeType() == 1)
           q.push_back(next);
       }
@@ -276,12 +290,21 @@ void SetRoutingEntries() {
       vector<Ptr<Node>> nexts = j->second;
       for (int k = 0; k < (int)nexts.size(); k++) {
         Ptr<Node> next = nexts[k];
-        uint32_t interface = nbr2if[node][next].idx;
-        if (node->GetNodeType() == 1)
-          DynamicCast<SwitchNode>(node)->AddTableEntry(dstAddr, interface);
-        else {
-          node->GetObject<RdmaDriver>()->m_rdma->AddTableEntry(dstAddr,
-                                                               interface);
+        auto nbr_it = nbr2if[node].find(next);
+        if (nbr_it == nbr2if[node].end())
+          continue;
+        const vector<Interface> &interfaces = nbr_it->second;
+        for (const auto &intf : interfaces) {
+          if (!intf.up)
+            continue;
+          for (uint32_t w = 0; w < intf.weight; w++) {
+            if (node->GetNodeType() == 1)
+              DynamicCast<SwitchNode>(node)->AddTableEntry(dstAddr, intf.idx);
+            else {
+              node->GetObject<RdmaDriver>()->m_rdma->AddTableEntry(dstAddr,
+                                                                   intf.idx);
+            }
+          }
         }
       }
     }
@@ -290,10 +313,30 @@ void SetRoutingEntries() {
 
 // take down the link between a and b, and redo the routing
 void TakeDownLink(NodeContainer n, Ptr<Node> a, Ptr<Node> b) {
-  if (!nbr2if[a][b].up)
+  auto &a2b = nbr2if[a][b];
+  auto &b2a = nbr2if[b][a];
+  bool link_is_up = false;
+  for (const auto &intf : a2b) {
+    if (intf.up) {
+      link_is_up = true;
+      break;
+    }
+  }
+  if (!link_is_up)
     return;
   // take down link between a and b
-  nbr2if[a][b].up = nbr2if[b][a].up = false;
+  for (auto &intf : a2b) {
+    if (!intf.up)
+      continue;
+    intf.up = false;
+    DynamicCast<QbbNetDevice>(a->GetDevice(intf.idx))->TakeDown();
+  }
+  for (auto &intf : b2a) {
+    if (!intf.up)
+      continue;
+    intf.up = false;
+    DynamicCast<QbbNetDevice>(b->GetDevice(intf.idx))->TakeDown();
+  }
   nextHop.clear();
   CalculateRoutes(n);
   // clear routing tables
@@ -303,8 +346,6 @@ void TakeDownLink(NodeContainer n, Ptr<Node> a, Ptr<Node> b) {
     else
       n.Get(i)->GetObject<RdmaDriver>()->m_rdma->ClearTable();
   }
-  DynamicCast<QbbNetDevice>(a->GetDevice(nbr2if[a][b].idx))->TakeDown();
-  DynamicCast<QbbNetDevice>(b->GetDevice(nbr2if[b][a].idx))->TakeDown();
   // reset routing table
   SetRoutingEntries();
 
@@ -624,11 +665,30 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
 
   QbbHelper qbb;
   Ipv4AddressHelper ipv4;
-  for (uint32_t i = 0; i < link_num; i++) {
-    uint32_t src, dst;
+  for (uint32_t i = 0; i < link_num;) {
+    std::string link_line;
+    if (!std::getline(topof >> std::ws, link_line)) {
+      std::cerr << "Error: invalid topology file format (insufficient link entries)" << std::endl;
+      return false;
+    }
+    if (link_line.empty() || link_line[0] == '#')
+      continue;
+
+    uint32_t src, dst, weight = 1;
     std::string data_rate, link_delay;
     double error_rate;
-    topof >> src >> dst >> data_rate >> link_delay >> error_rate;
+    std::istringstream iss(link_line);
+    if (!(iss >> src >> dst >> data_rate >> link_delay >> error_rate)) {
+      std::cerr << "Error: invalid topology link entry: " << link_line << std::endl;
+      return false;
+    }
+    if (!(iss >> weight))
+      weight = 1;
+    if (weight == 0) {
+      std::cerr << "Error: link weight must be >= 1 in topology entry: "
+                << link_line << std::endl;
+      return false;
+    }
     Ptr<Node> snode = n.Get(src), dnode = n.Get(dst);
 
     qbb.SetDeviceAttribute("DataRate", StringValue(data_rate));
@@ -668,26 +728,27 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     }
 
     // used to create a graph of the topology
-    nbr2if[snode][dnode].idx =
-        DynamicCast<QbbNetDevice>(d.Get(0))->GetIfIndex();
-    nbr2if[snode][dnode].up = true;
-    nbr2if[snode][dnode].delay =
-        DynamicCast<QbbChannel>(
-            DynamicCast<QbbNetDevice>(d.Get(0))->GetChannel())
-            ->GetDelay()
-            .GetTimeStep();
-    nbr2if[snode][dnode].bw =
-        DynamicCast<QbbNetDevice>(d.Get(0))->GetDataRate().GetBitRate();
-    nbr2if[dnode][snode].idx =
-        DynamicCast<QbbNetDevice>(d.Get(1))->GetIfIndex();
-    nbr2if[dnode][snode].up = true;
-    nbr2if[dnode][snode].delay =
-        DynamicCast<QbbChannel>(
-            DynamicCast<QbbNetDevice>(d.Get(1))->GetChannel())
-            ->GetDelay()
-            .GetTimeStep();
-    nbr2if[dnode][snode].bw =
-        DynamicCast<QbbNetDevice>(d.Get(1))->GetDataRate().GetBitRate();
+    Interface s_to_d;
+    s_to_d.idx = DynamicCast<QbbNetDevice>(d.Get(0))->GetIfIndex();
+    s_to_d.up = true;
+    s_to_d.delay = DynamicCast<QbbChannel>(
+                       DynamicCast<QbbNetDevice>(d.Get(0))->GetChannel())
+                       ->GetDelay()
+                       .GetTimeStep();
+    s_to_d.bw = DynamicCast<QbbNetDevice>(d.Get(0))->GetDataRate().GetBitRate();
+    s_to_d.weight = weight;
+    nbr2if[snode][dnode].push_back(s_to_d);
+
+    Interface d_to_s;
+    d_to_s.idx = DynamicCast<QbbNetDevice>(d.Get(1))->GetIfIndex();
+    d_to_s.up = true;
+    d_to_s.delay = DynamicCast<QbbChannel>(
+                       DynamicCast<QbbNetDevice>(d.Get(1))->GetChannel())
+                       ->GetDelay()
+                       .GetTimeStep();
+    d_to_s.bw = DynamicCast<QbbNetDevice>(d.Get(1))->GetDataRate().GetBitRate();
+    d_to_s.weight = weight;
+    nbr2if[dnode][snode].push_back(d_to_s);
 
     // This is just to set up the connectivity between nodes. The IP addresses
     // are useless
@@ -703,6 +764,7 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     DynamicCast<QbbNetDevice>(d.Get(1))->TraceConnectWithoutContext(
         "QbbPfc", MakeBoundCallback(&get_pfc, pfc_file,
                                     DynamicCast<QbbNetDevice>(d.Get(1))));
+    i++;
   }
 
   nic_rate = get_nic_rate(n);
@@ -868,12 +930,13 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     for (auto i : nbr2if) {
       for (auto j : i.second) {
         uint16_t node = i.first->GetId();
-        uint8_t intf = j.second.idx;
-        uint64_t bps =
-            DynamicCast<QbbNetDevice>(i.first->GetDevice(j.second.idx))
-                ->GetDataRate()
-                .GetBitRate();
-        sim_setting.port_speed[node][intf] = bps;
+        for (const auto &intf : j.second) {
+          uint64_t bps =
+              DynamicCast<QbbNetDevice>(i.first->GetDevice(intf.idx))
+                  ->GetDataRate()
+                  .GetBitRate();
+          sim_setting.port_speed[node][intf.idx] = bps;
+        }
       }
     }
     sim_setting.win = maxBdp;
