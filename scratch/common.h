@@ -78,6 +78,11 @@ uint64_t link_down_time = 0;
 uint32_t link_down_A = 0, link_down_B = 0;
 
 uint32_t enable_trace = 1;
+int enable_pfc_trace = -1;
+int enable_fct_trace = -1;
+int enable_qlen_monitor = -1;
+uint32_t enable_ns3_component_log = 0;
+std::string ns3_scheduler;
 
 uint32_t buffer_size = 16;
 
@@ -156,35 +161,29 @@ struct QlenDistribution {
     cnt[kb]++;
   }
 };
-map<uint32_t, map<uint32_t, uint32_t>> queue_result;
 void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
+  if (qlen_output == nullptr) {
+    return;
+  }
+
+  uint64_t now = Simulator::Now().GetNanoSeconds();
+  if (now > qlen_mon_end) {
+    return;
+  }
+
   for (uint32_t i = 0; i < n->GetN(); i++) {
     if (n->Get(i)->GetNodeType() == 1) { // is switch
       Ptr<SwitchNode> sw = DynamicCast<SwitchNode>(n->Get(i));
-      if (queue_result.find(i) == queue_result.end())
-        queue_result[i];
-      // fprintf(qlen_output, "\n");
-      // fprintf(qlen_output, "time: %lu\n", Simulator::Now().GetTimeStep());
       int test = 0;
       for (uint32_t j = 1; j < sw->GetNDevices(); j++) {
         uint32_t size = 0;
         for (uint32_t k = 0; k < SwitchMmu::qCnt; k++)
           size += sw->m_mmu->egress_bytes[j][k];
-        // if (queue_result[i].find(j) == queue_result[i].end())
-        //{
-        //	vector<uint32_t> v;
-        //	queue_result[i][j] = v;
-        // }
         if (size >= 1000) {
-          queue_result[i][j] = size; // .push_back(size);
           if (test == 0) {
             test = 1;
-            fprintf(qlen_output, "time %lu %u ", Simulator::Now().GetTimeStep(),
-                    i);
+            fprintf(qlen_output, "time %lu %u ", now, i);
           }
-          // if(j==1){
-          // fprintf(qlen_output, "t %lu %u j %u %u ",
-          // Simulator::Now().GetTimeStep(), i, j, size);
           if (j < sw->GetNDevices() - 1) {
             test = 2;
             fprintf(qlen_output, "j %u %u ", j, size);
@@ -196,17 +195,14 @@ void monitor_buffer(FILE *qlen_output, NodeContainer *n) {
         if (j == sw->GetNDevices() - 1 && test == 2) {
           fprintf(qlen_output, "\n");
         }
-        // else
-        //	queue_result[i][j]+=size;
-        // queue_result[i][j].add(size);
       }
-      fflush(qlen_output);
-      // fprintf(qlen_output, "\n");
     }
   }
-  fflush(qlen_output);
-  Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
-                      qlen_output, n);
+  if (qlen_mon_interval > 0 &&
+      now + qlen_mon_interval <= qlen_mon_end) {
+    Simulator::Schedule(NanoSeconds(qlen_mon_interval), &monitor_buffer,
+                        qlen_output, n);
+  }
 }
 
 void CalculateRoute(Ptr<Node> host) {
@@ -372,7 +368,6 @@ bool ReadConf(string network_configuration) {
   conf.open(network_configuration);
   if (!conf.is_open()) {
     std::cout << "Error: cannot find network config file: " << network_configuration << std::endl;
-    fflush(stdout);
     return false;
   }
   
@@ -508,6 +503,16 @@ bool ReadConf(string network_configuration) {
       conf >> link_down_time >> link_down_A >> link_down_B;
     } else if (key.compare("ENABLE_TRACE") == 0) {
       conf >> enable_trace;
+    } else if (key.compare("ENABLE_PFC_TRACE") == 0) {
+      conf >> enable_pfc_trace;
+    } else if (key.compare("ENABLE_FCT_TRACE") == 0) {
+      conf >> enable_fct_trace;
+    } else if (key.compare("ENABLE_QLEN_MONITOR") == 0) {
+      conf >> enable_qlen_monitor;
+    } else if (key.compare("ENABLE_NS3_COMPONENT_LOG") == 0) {
+      conf >> enable_ns3_component_log;
+    } else if (key.compare("NS3_SCHEDULER") == 0) {
+      conf >> ns3_scheduler;
     } else if (key.compare("KMAX_MAP") == 0) {
       int n_k;
       conf >> n_k;
@@ -561,9 +566,17 @@ bool ReadConf(string network_configuration) {
       headroom_factor = v;
       std::cout << "headroom factor set to: " << headroom_factor << std::endl;
     }
-    fflush(stdout);
   }
   conf.close();
+  if (enable_pfc_trace < 0) {
+    enable_pfc_trace = enable_trace;
+  }
+  if (enable_fct_trace < 0) {
+    enable_fct_trace = enable_trace;
+  }
+  if (enable_qlen_monitor < 0) {
+    enable_qlen_monitor = enable_trace;
+  }
   return true;
 }
 
@@ -661,7 +674,15 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   rem->SetAttribute("ErrorRate", DoubleValue(error_rate_per_link));
   rem->SetAttribute("ErrorUnit", StringValue("ERROR_UNIT_PACKET"));
 
-  FILE *pfc_file = fopen(pfc_output_file.c_str(), "w");
+  FILE *pfc_file = nullptr;
+  if (enable_pfc_trace && !pfc_output_file.empty()) {
+    pfc_file = fopen(pfc_output_file.c_str(), "w");
+    if (pfc_file == nullptr) {
+      std::cerr << "Error: cannot open PFC output file: " << pfc_output_file
+                << std::endl;
+      return false;
+    }
+  }
 
   QbbHelper qbb;
   Ipv4AddressHelper ipv4;
@@ -705,8 +726,6 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     } else {
       qbb.SetDeviceAttribute("ReceiveErrorModel", PointerValue(rem));
     }
-
-    fflush(stdout);
 
     // Assigne server IP
     // Note: this should be before the automatic assignment below
@@ -758,12 +777,14 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     ipv4.Assign(d);
 
     // setup PFC trace
-    DynamicCast<QbbNetDevice>(d.Get(0))->TraceConnectWithoutContext(
-        "QbbPfc", MakeBoundCallback(&get_pfc, pfc_file,
-                                    DynamicCast<QbbNetDevice>(d.Get(0))));
-    DynamicCast<QbbNetDevice>(d.Get(1))->TraceConnectWithoutContext(
-        "QbbPfc", MakeBoundCallback(&get_pfc, pfc_file,
-                                    DynamicCast<QbbNetDevice>(d.Get(1))));
+    if (pfc_file != nullptr) {
+      DynamicCast<QbbNetDevice>(d.Get(0))->TraceConnectWithoutContext(
+          "QbbPfc", MakeBoundCallback(&get_pfc, pfc_file,
+                                      DynamicCast<QbbNetDevice>(d.Get(0))));
+      DynamicCast<QbbNetDevice>(d.Get(1))->TraceConnectWithoutContext(
+          "QbbPfc", MakeBoundCallback(&get_pfc, pfc_file,
+                                      DynamicCast<QbbNetDevice>(d.Get(1))));
+    }
     i++;
   }
 
@@ -808,7 +829,15 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   }
 
 #if ENABLE_QP
-  FILE *fct_output = fopen(fct_output_file.c_str(), "w");
+  FILE *fct_output = nullptr;
+  if (enable_fct_trace && !fct_output_file.empty()) {
+    fct_output = fopen(fct_output_file.c_str(), "w");
+    if (fct_output == nullptr) {
+      std::cerr << "Error: cannot open FCT output file: " << fct_output_file
+                << std::endl;
+      return false;
+    }
+  }
   std::cout << "QP is enabled " << std::endl;
   //
   // install RDMA driver
@@ -920,9 +949,16 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
     trace_nodes = NodeContainer(trace_nodes, n.Get(nid));
   }
 
-  FILE *trace_output = fopen(trace_output_file.c_str(), "w");
-  if (enable_trace)
+  FILE *trace_output = nullptr;
+  if (enable_trace) {
+    trace_output = fopen(trace_output_file.c_str(), "w");
+    if (trace_output == nullptr) {
+      std::cerr << "Error: cannot open trace output file: "
+                << trace_output_file << std::endl;
+      return false;
+    }
     qbb.EnableTracing(trace_output, trace_nodes);
+  }
 
   // dump link speed to trace file
   {
@@ -940,7 +976,9 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
       }
     }
     sim_setting.win = maxBdp;
-    sim_setting.Serialize(trace_output);
+    if (trace_output != nullptr) {
+      sim_setting.Serialize(trace_output);
+    }
   }
 
   Ipv4GlobalRoutingHelper::PopulateRoutingTables();
@@ -969,9 +1007,17 @@ bool SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>)) {
   }
 
   // schedule buffer monitor
-  FILE *qlen_output = fopen(qlen_mon_file.c_str(), "w");
-  Simulator::Schedule(NanoSeconds(qlen_mon_start), &monitor_buffer, qlen_output,
-                      &n);
+  if (enable_qlen_monitor && !qlen_mon_file.empty() &&
+      qlen_mon_start <= qlen_mon_end) {
+    FILE *qlen_output = fopen(qlen_mon_file.c_str(), "w");
+    if (qlen_output == nullptr) {
+      std::cerr << "Error: cannot open queue monitor output file: "
+                << qlen_mon_file << std::endl;
+      return false;
+    }
+    Simulator::Schedule(
+        NanoSeconds(qlen_mon_start), &monitor_buffer, qlen_output, &n);
+  }
 
   return true;
 }

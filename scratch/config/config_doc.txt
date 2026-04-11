@@ -48,7 +48,12 @@ ACK_HIGH_PRIO 0 {0: ACK has same priority with data packet, 1: prioritize ACK}
 
 LINK_DOWN 0 0 0 {a b c: take down link between b and c at time a. 0 0 0 mean no link down}
 
+NS3_SCHEDULER ns3::HeapScheduler {optional scheduler override; examples: ns3::MapScheduler, ns3::HeapScheduler, ns3::CalendarScheduler}
+ENABLE_NS3_COMPONENT_LOG 0 {0: disable noisy ns-3 component logs, 1: enable for debugging}
 ENABLE_TRACE 1 {dump packet-level events or not}
+ENABLE_PFC_TRACE 1 {optional PFC trace toggle; if omitted, follows ENABLE_TRACE}
+ENABLE_FCT_TRACE 1 {optional flow-completion trace toggle; if omitted, follows ENABLE_TRACE}
+ENABLE_QLEN_MONITOR 1 {optional queue-length monitor toggle; if omitted, follows ENABLE_TRACE}
 
 KMAX_MAP 3 25000000000 400 50000000000 800 100000000000 1600 {a map from link bandwidth to ECN threshold kmax}
 KMIN_MAP 3 25000000000 100 50000000000 200 100000000000 400 {a map from link bandwidth to ECN threshold kmin}
